@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ASCII Aquarium &amp; Terrarium</title>
+<script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+<style>
+  :root{
+    --background:#0f1419; --card:#171d24; --border:#2a333d; --card-border:#2a333d;
+    --foreground:#e6edf3; --muted-foreground:#8b98a5; --accent:#1f2833;
+    --primary:#3b82f6; --primary-foreground:#ffffff;
+    --success:#22c55e; --warning:#f59e0b; --error:#ef4444; --chart-2:#38bdf8;
+  }
+  body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:14px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  #tank{font-size:14px;line-height:1.15;white-space:pre;cursor:crosshair;user-select:none;padding:10px;border-radius:10px;display:inline-block;transition:background-color .8s}
+  .bar{height:6px;border-radius:3px;background:var(--border);overflow:hidden}
+  .bar>i{display:block;height:100%;border-radius:3px}
+  .b-good{color:var(--success)} .b-warn{color:var(--warning)} .b-bad{color:var(--error)} .b-tip{color:var(--muted-foreground)}
+  .btn{padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);font-size:12px}
+  .btn:hover{border-color:var(--primary)}
+  .btn.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+  .row:hover{background:var(--accent)}
+  .row.sel{outline:1px solid var(--primary);background:var(--accent)}
+</style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased m-0 p-0">
+<div class="p-4 space-y-3 max-w-[1280px] mx-auto">
+  <div class="flex flex-wrap items-center gap-3">
+    <h1 class="mono text-lg font-semibold">&gt;&lt;&gt; ASCII Tank</h1>
+    <div id="habs" class="flex flex-wrap gap-1"></div>
+    <div class="flex-1"></div>
+    <label class="text-xs text-[var(--muted-foreground)] flex items-center gap-2">Temp
+      <input id="temp" type="range" min="5" max="40" class="accent-[var(--primary)]">
+      <span id="tempv" class="mono tabular-nums text-[var(--foreground)] w-24"></span></label>
+    <div class="flex gap-1" id="speeds"></div>
+    <button class="btn" id="clean">🧽 Clean</button>
+    <button class="btn" id="reset">↺ Empty tank</button>
+  </div>
+
+  <div class="grid gap-3 lg:grid-cols-[1fr_370px]">
+    <div class="space-y-3 min-w-0">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+        <div class="overflow-x-auto"><pre id="tank" class="mono"></pre></div>
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs mt-2">
+          <div class="flex items-center gap-2"><span id="qname" class="text-[var(--muted-foreground)]"></span><div class="bar w-28"><i id="qbar"></i></div><span id="qval" class="mono"></span></div>
+          <div><span class="text-[var(--muted-foreground)]">Stocking</span> <span id="load" class="mono"></span></div>
+          <div><span class="text-[var(--muted-foreground)]">Time</span> <span id="clock" class="mono"></span></div>
+          <div id="hint" class="text-[var(--muted-foreground)] flex-1 text-right"></div>
+        </div>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-sm font-semibold mb-2">Inhabitants</div>
+          <div id="inh" class="space-y-0.5 max-h-56 overflow-y-auto"></div>
+          <div id="inhDetail" class="mt-2"></div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-3 mb-1">Plants &amp; decor</div>
+          <div id="itemsIn" class="flex flex-wrap gap-1"></div>
+        </div>
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3">
+          <div class="text-sm font-semibold mb-2">Compatibility report</div>
+          <div id="report" class="text-xs space-y-1 max-h-40 overflow-y-auto"></div>
+          <div class="text-sm font-semibold mt-3 mb-1">Log</div>
+          <div id="log" class="text-xs mono space-y-0.5 max-h-32 overflow-y-auto text-[var(--muted-foreground)]"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 flex flex-col gap-2 self-start">
+      <div class="flex gap-1" id="tabs"></div>
+      <div id="shop" class="max-h-[340px] overflow-y-auto space-y-0.5"></div>
+      <div id="detail" class="border-t border-[var(--card-border)] pt-2 text-xs"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const W=78,H=22,GROUND=H-4,TICK_MS=120;
+const rnd=(a,b)=>a+Math.random()*(b-a), pick=a=>a[Math.floor(Math.random()*a.length)];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $=s=>document.querySelector(s);
+
+const HAB={
+  freshwater:{name:'Freshwater Tank',short:'Freshwater',emoji:'🐟',aquatic:true,temp:25,cap:20,bg:'#071f2e',murk:'#1f2e12',glass:'#7fb3cf',surf:'#5fb4dd',sub:['#c2a878','#8d7653','#a89060'],subCh:".,:'`;",qual:'Water quality'},
+  saltwater:{name:'Reef Tank',short:'Reef',emoji:'🐠',aquatic:true,temp:26,cap:24,bg:'#04173a',murk:'#1d2a14',glass:'#8fb8e8',surf:'#6aa8ff',sub:['#f1e3c0','#d9c79a','#fff3d6'],subCh:".,:'`",qual:'Water quality'},
+  tropical:{name:'Rainforest Terrarium',short:'Rainforest',emoji:'🐸',aquatic:false,temp:25,cap:12,bg:'#0c1f14',murk:'#2a2410',glass:'#8fc79f',sub:['#8a6a3a','#5e4728','#7f9a4a'],subCh:'~"&,.:',qual:'Hygiene'},
+  desert:{name:'Desert Terrarium',short:'Desert',emoji:'🦎',aquatic:false,temp:32,cap:20,bg:'#24180b',murk:'#2a2a10',glass:'#d9b98a',sub:['#e9c98f','#c9a66b','#a0805a'],subCh:".:'`,o",qual:'Hygiene'}
+};
+const HAB_KEYS=Object.keys(HAB);
+
+// ---------- Species ----------
+const SPECIES=[
+ {id:'neon',name:'Neon Tetra',hab:['freshwater'],t:[20,26],size:.5,speed:.55,zone:'mid',school:6,foods:['flakes','bloodworms','brine'],tags:['softWater'],col:'#47e5ff',spr:['><>'],blurb:'Tiny, peaceful shoaling fish. Feels safe only in a group, and fits in the mouth of any bigger fish.'},
+ {id:'goldfish',name:'Goldfish',hab:['freshwater'],t:[10,22],size:4,speed:.35,zone:'mid',foods:['flakes','pellets','veggies'],eats:['neon','shrimp'],destroys:['sword','duckweed','moss'],col:'#ffb703',spr:['><(((o>'],blurb:'A coldwater fish. Too cool for tropical tankmates, makes a lot of waste, eats soft plants and anything small enough to swallow.'},
+ {id:'betta',name:'Betta',hab:['freshwater'],t:[24,30],size:1,speed:.3,zone:'mid',foods:['pellets','bloodworms','brine'],eats:['shrimp'],tags:['longFin','territorial'],loves:['anubias'],col:'#ff4d8d',spr:['}}(o>'],blurb:'Siamese fighting fish. Two males will fight. Its long fins attract fin-nippers. Likes resting on broad leaves.'},
+ {id:'angel',name:'Angelfish',hab:['freshwater'],t:[24,30],size:3,speed:.3,zone:'mid',foods:['flakes','bloodworms','brine'],eats:['neon','shrimp'],tags:['longFin','softWater'],loves:['sword'],col:'#e8e8f0',spr:['  /\\','><  o>','  \\/'],blurb:'Elegant cichlid. Peaceful-looking, but adults eat neon tetras and shrimp.'},
+ {id:'barb',name:'Tiger Barb',hab:['freshwater'],t:[20,26],size:1,speed:.6,zone:'mid',school:5,foods:['flakes','bloodworms'],harass:['betta','angel'],col:'#ffd23f',spr:['><|||>'],blurb:'Lively fish known for nipping fins, especially long ones. Bigger groups keep the nipping among themselves.'},
+ {id:'cory',name:'Corydoras',hab:['freshwater'],t:[22,26],size:1,speed:.3,zone:'bottom',school:4,foods:['wafers','pellets','bloodworms'],cleanup:1,col:'#d4a373',spr:['=<:o>'],blurb:'Peaceful bottom-dwelling catfish that sifts the substrate for leftovers.'},
+ {id:'shrimp',name:'Cherry Shrimp',hab:['freshwater'],t:[18,28],size:.2,speed:.2,zone:'bottom',foods:['wafers','veggies'],cleanup:1,tags:['invert'],loves:['moss'],col:'#ff5a5a',spr:['(,,=-'],blurb:'Tiny cleanup crew. Grazes algae and biofilm. Most fish see it as a snack.'},
+ {id:'snail',name:'Mystery Snail',hab:['freshwater'],t:[20,28],size:.5,speed:.08,zone:'bottom',foods:['wafers','veggies'],cleanup:2,tags:['invert'],col:'#e9c46a',spr:["@__'"],blurb:'Slow, peaceful algae and leftover eater. Sensitive to copper.'},
+ {id:'clown',name:'Clownfish',hab:['saltwater'],t:[24,28],size:1,speed:.45,zone:'mid',foods:['flakes','pellets','brine'],loves:['anemone'],col:'#ff7b25',spr:['><|)|>'],blurb:'Hardy reef fish that lives inside a host anemone, protected from its sting.'},
+ {id:'tang',name:'Blue Tang',hab:['saltwater'],t:[24,28],size:6,speed:.5,zone:'mid',foods:['nori','flakes','brine'],loves:['caulerpa','liverock'],col:'#3a86ff',spr:['><{{{o>'],blurb:'Fast-swimming algae grazer that needs plenty of space and live rock to pick at.'},
+ {id:'seahorse',name:'Seahorse',hab:['saltwater'],t:[22,26],size:2,speed:.12,zone:'mid',foods:['brine'],needs:['caulerpa','coral'],tags:['slowEater'],col:'#ffbe0b',spr:[' _','(o-',' )','(_,'],blurb:'Slow, delicate fish that holds on with its tail. Fast eaters outcompete it, and anemones can sting it.'},
+ {id:'lionfish',name:'Lionfish',hab:['saltwater'],t:[24,28],size:6,speed:.3,zone:'mid',foods:['silversides'],eats:['clown','cshrimp','seahorse'],col:'#ff6f59',spr:[' \\\\\\','=<((o>',' ///'],blurb:'Venomous ambush predator. Will swallow any fish or shrimp that fits in its mouth.'},
+ {id:'cshrimp',name:'Cleaner Shrimp',hab:['saltwater'],t:[24,28],size:.3,speed:.2,zone:'bottom',foods:['brine','pellets'],cleanup:1,tags:['invert'],col:'#fefae0',spr:['((,,==='],blurb:'Reef janitor that picks parasites off fish. Very sensitive to copper.'},
+ {id:'dartfrog',name:'Poison Dart Frog',hab:['tropical'],t:[22,28],size:.5,speed:.25,zone:'climb',foods:['flies'],tags:['toxic'],loves:['bromeliad'],needs:['bromeliad','tmoss'],col:'#4cc9f0',spr:['@.@','/"\\'],blurb:'Tiny, brightly colored frog. Needs humidity and lots of cover. Eats only very small live insects.'},
+ {id:'crested',name:'Crested Gecko',hab:['tropical'],t:[20,27],size:1.5,speed:.25,zone:'climb',foods:['puree','crickets','flies'],eats:['dartfrog'],needs:['cork','pothos'],col:'#f4a261',spr:['~~=:::o>'],blurb:'Climbs and needs branches or plants. Eats fruit puree and insects, and will try to eat small frogs.'},
+ {id:'isopod',name:'Isopods',hab:['tropical'],t:[18,28],size:.2,speed:.1,zone:'ground',school:5,foods:['litter','greens'],cleanup:2,tags:['invert'],col:'#adb5bd',spr:['{||>'],blurb:'Bioactive cleanup crew. Eats leaf litter, mold and waste. Lives in colonies.'},
+ {id:'leo',name:'Leopard Gecko',hab:['desert'],t:[26,34],size:1.5,speed:.2,zone:'ground',foods:['crickets','mealworms'],needs:['cave'],col:'#f9c74f',spr:['~~=:%:o>'],blurb:'Ground-dwelling insect eater. Needs a hide to feel secure.'},
+ {id:'beardie',name:'Bearded Dragon',hab:['desert'],t:[28,38],size:7,speed:.25,zone:'ground',foods:['crickets','mealworms','greens'],eats:['leo'],destroys:['aloe'],loves:['basking'],col:'#e9a84f',spr:['  ^^^^','~=####o>','  /\\ /\\'],blurb:'Large omnivorous lizard that loves to bask. Eats greens and insects, and smaller lizards too.'},
+ {id:'scorpion',name:'Desert Scorpion',hab:['desert'],t:[25,32],size:.5,speed:.2,zone:'ground',foods:['crickets','mealworms'],eats:['isopod'],harass:['leo'],loves:['cave'],col:'#d4a5a5',spr:['_.',' \\\\',' (:::)<'],blurb:'Nocturnal hunter that stings anything it shares space with.'},
+].map(s=>Object.assign({school:0,eats:[],harass:[],tags:[],loves:[],needs:[],destroys:[],cleanup:0},s));
+const SP={};
+const MIR={'<':'>','>':'<','(':')',')':'(','/':'\\','\\':'/','{':'}','}':'{','[':']',']':'['};
+const padL=l=>{const w=Math.max(...l.map(x=>x.length));return l.map(x=>x.padEnd(w));};
+const mirror=l=>padL(l).map(x=>[...x].reverse().map(c=>MIR[c]||c).join(''));
+SPECIES.forEach(s=>{s.R=padL(s.spr);s.L=mirror(s.spr);SP[s.id]=s;});
+
+// ---------- Items ----------
+const ITEMS=[
+ {id:'javafern',name:'Java Fern',kind:'plant',hab:['freshwater'],col:'#40916c',sway:1,spr:[' \\|/ ','\\\\|//',' \\|/ ','  |  '],blurb:'Tough plant that most fish, even goldfish, leave alone.'},
+ {id:'sword',name:'Amazon Sword',kind:'plant',hab:['freshwater'],col:'#74c69d',sway:1,spr:['\\  |  /',' \\ | / ','  \\|/  ','   |   '],blurb:'Big, leafy centerpiece plant. Soft leaves, so goldfish eat it.'},
+ {id:'anubias',name:'Anubias',kind:'plant',hab:['freshwater'],col:'#52b788',sway:0,spr:[' _   _ ','(_) (_)','  \\ /  ','   |   '],blurb:'Broad, sturdy leaves. Bettas like to rest on them.'},
+ {id:'moss',name:'Java Moss',kind:'plant',hab:['freshwater'],col:'#95d5b2',sway:0,spr:['&%&%&%&'],blurb:'Carpet moss. Shrimp graze in it and baby shrimp hide in it.'},
+ {id:'duckweed',name:'Duckweed',kind:'plant',hab:['freshwater'],float:true,col:'#b7e4c7',sway:0,spr:['o.Oo.o'],blurb:'Floating plant that soaks up nitrates. Goldfish eat it.'},
+ {id:'driftwood',name:'Driftwood',kind:'decor',hab:['freshwater'],col:'#b08060',sway:0,spr:['     _/ ','  __/   ','_/  \\___'],blurb:'Natural wood that softens water slightly.'},
+ {id:'castle',name:'Castle',kind:'decor',hab:['freshwater','saltwater'],col:'#adb5bd',sway:0,spr:['|^|  |^|','| |__| |','|  []  |'],blurb:'A classic. Gives fish somewhere to hide.'},
+ {id:'seashell',name:'Seashells',kind:'decor',hab:['saltwater'],col:'#ffd6a5',sway:0,spr:['(@)'],harm:{tags:['softWater'],lvl:'warn',why:'raises water hardness and pH, which is bad for soft-water fish like the {sp}'},blurb:'Fine in a reef. In freshwater they slowly dissolve and harden the water.'},
+ {id:'copper',name:'Copper Ornament',kind:'decor',hab:['freshwater','saltwater'],col:'#d4774a',sway:0,spr:['[Cu]','|__|'],harm:{tags:['invert'],lvl:'bad',why:'leaches copper, which is toxic to invertebrates like the {sp}'},blurb:'Shiny, but copper is toxic to shrimp, snails and other invertebrates.'},
+ {id:'anemone',name:'Anemone',kind:'plant',hab:['saltwater'],col:'#f72585',sway:1,spr:['\\|/|\\|/',' \\|||/ ','  (_)  '],harm:{ids:['seahorse'],lvl:'bad',why:'stings slow swimmers like the {sp}'},blurb:'Clownfish host. Its tentacles sting slow fish.'},
+ {id:'coral',name:'Brain Coral',kind:'plant',hab:['saltwater'],col:'#f4978e',sway:0,spr:[' .--. ','(~~~~)','(~~~~)'],blurb:'Hardy coral. Seahorses can hold onto it.'},
+ {id:'liverock',name:'Live Rock',kind:'decor',hab:['saltwater'],col:'#b5a1a8',sway:0,spr:['  __   ',' /  \\_ ','/_____\\'],blurb:'Porous rock full of helpful bacteria. Tangs graze on it.'},
+ {id:'caulerpa',name:'Caulerpa',kind:'plant',hab:['saltwater'],col:'#38b000',sway:1,spr:['} {','{ }','} {',' | '],blurb:'Macroalgae. Tangs graze on it and seahorses hitch onto it.'},
+ {id:'bromeliad',name:'Bromeliad',kind:'plant',hab:['tropical'],col:'#ff4d9d',sway:.5,spr:['\\ | /',' \\|/ ',' (_) '],blurb:'Its leaves hold little pools of water where dart frogs hang out.'},
+ {id:'pothos',name:'Pothos Vine',kind:'plant',hab:['tropical'],col:'#70e000',sway:1,spr:['@   @',' \\  |','@ \\ |','   \\|'],harm:{ids:['beardie'],lvl:'warn',why:'is toxic if the {sp} eats it'},blurb:'Hardy climbing vine that gives geckos cover. Toxic if eaten.'},
+ {id:'tmoss',name:'Sheet Moss',kind:'plant',hab:['tropical'],col:'#8ab17d',sway:0,spr:['^~^~^~^'],blurb:'Holds humidity in the substrate.'},
+ {id:'cork',name:'Cork Branch',kind:'decor',hab:['tropical'],col:'#c49a6c',sway:0,spr:['      __/','   __/   ','__/      '],blurb:'Climbing branch for tree-dwelling animals.'},
+ {id:'dish',name:'Water Dish',kind:'decor',hab:['tropical','desert'],col:'#48cae4',sway:0,spr:['\\~~~/'],blurb:'Shallow water bowl.'},
+ {id:'cactus',name:'Cactus',kind:'plant',hab:['desert'],col:'#2a9d8f',sway:0,spr:['  .-.  ','  | |  ','|-| |-|',"'-| |-'",'  | |  '],harm:{ids:['dartfrog','crested'],lvl:'warn',why:'has spines that can tear the soft skin of the {sp}'},blurb:'Low-water plant. Spines are a hazard for soft-skinned animals.'},
+ {id:'aloe',name:'Aloe',kind:'plant',hab:['desert'],col:'#90be6d',sway:.3,spr:['\\  |  /',' \\ | / ','  \\|/  ','  /_\\  '],blurb:'Succulent. Bearded dragons like to nibble it.'},
+ {id:'cave',name:'Rock Cave',kind:'decor',hab:['desert','tropical'],col:'#a68a64',sway:0,spr:['  ____  ',' /    \\ ','/  __  \\','|_|  |_|'],blurb:'A hide. Essential for shy ground dwellers.'},
+ {id:'basking',name:'Basking Rock',kind:'decor',hab:['desert'],col:'#d08c4a',sway:0,spr:['   ___  ',' _/   \\_','/_______\\'],blurb:'Warm, flat rock under the heat lamp.'},
+];
+const IT={}; ITEMS.forEach(i=>{i.spr=padL(i.spr);IT[i.id]=i;});
+
+// ---------- Foods ----------
+const FOODS=[
+ {id:'flakes',name:'Fish Flakes',medium:'water',ch:'*',col:'#ffcf70',n:5,val:9,motion:'slow',blurb:'Floats first, then slowly sinks. A staple for most community fish.'},
+ {id:'pellets',name:'Sinking Pellets',medium:'water',ch:'o',col:'#d99b5a',n:4,val:11,motion:'fast',blurb:'Sinks quickly. Good for bettas and bottom feeders.'},
+ {id:'bloodworms',name:'Bloodworms',medium:'water',ch:'~',col:'#ff4d4d',n:3,val:15,motion:'mid',blurb:'Frozen insect larvae. A protein treat.'},
+ {id:'brine',name:'Brine Shrimp',medium:'water',ch:'.',col:'#ff9fb2',n:7,val:6,motion:'drift',blurb:'Tiny drifting shrimp. Seahorses eat almost nothing else.'},
+ {id:'wafers',name:'Algae Wafer',medium:'water',ch:'O',col:'#7bd389',n:1,val:35,motion:'fast',blurb:'Sinks to the bottom for snails, shrimp and catfish.'},
+ {id:'veggies',name:'Blanched Zucchini',medium:'water',ch:'[]',col:'#b5e48c',n:1,val:35,motion:'fast',blurb:'Fresh veg for goldfish and invertebrates.'},
+ {id:'nori',name:'Nori Seaweed',medium:'water',ch:'#',col:'#52b788',n:2,val:25,motion:'drift',blurb:'Dried seaweed for algae-grazing marine fish.'},
+ {id:'silversides',name:'Frozen Silversides',medium:'water',ch:'-<',col:'#dfe7ef',n:1,val:55,motion:'mid',blurb:'Whole small fish for marine predators.'},
+ {id:'crickets',name:'Live Crickets',medium:'land',ch:'x',col:'#c08552',n:3,val:20,motion:'hop',blurb:'Live, hopping insects for lizards and scorpions.'},
+ {id:'mealworms',name:'Mealworms',medium:'land',ch:'~',col:'#e9c46a',n:3,val:15,motion:'crawl',blurb:'Slow, wriggly larvae.'},
+ {id:'flies',name:'Fruit Flies',medium:'land',ch:',',col:'#dee2e6',n:7,val:7,motion:'fly',blurb:'Tiny flightless flies, perfect for frogs.'},
+ {id:'puree',name:'Fruit Puree',medium:'land',ch:'(o)',col:'#f8961e',n:1,val:45,motion:'dish',blurb:'Complete fruit-based diet for crested geckos.'},
+ {id:'greens',name:'Leafy Greens',medium:'land',ch:'%',col:'#80ed99',n:2,val:25,motion:'dish',blurb:'Collards and dandelion for herbivores.'},
+ {id:'litter',name:'Leaf Litter',medium:'land',ch:'&',col:'#bc8a5f',n:3,val:15,motion:'dish',noRot:true,blurb:'Dried leaves. Food and shelter for isopods. Does not rot.'},
+];
+const FD={}; FOODS.forEach(f=>FD[f.id]=f);
+
+const NAMES=['Bubbles','Finn','Nemo','Dory','Gill','Pebble','Sunny','Ziggy','Mango','Kiwi','Noodle','Biscuit','Pip','Opal','Comet','Juniper','Pickle','Blue','Ember','Sprout','Twig','Basil','Mochi','Taco','Wasabi','Clover','Fig','Rusty','Coral','Echo','Luna','Ripple','Sandy','Spike','Pudding','Olive'];
+
+// ---------- State ----------
+const KEY='asciiTank.v1';
+let S={cur:'freshwater',speed:1,uid:1,tanks:{}};
+const newTank=h=>({hab:h,temp:HAB[h].temp,creatures:[],items:[],foods:[],clean:92,tick:0,log:[]});
+const tank=()=>S.tanks[S.cur];
+let P=[]; // visual particles
+let shopTab='creatures', shopSel=null, confirmAdd=false, selUid=null;
+
+function log(msg,T=tank()){const m=Math.floor(T.tick/8/60),s=Math.floor(T.tick/8)%60;T.log.unshift(`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')} ${msg}`);T.log.length=Math.min(T.log.length,40);dirtyLog=true;}
+
+function spawnY(sp,h){const lo=2,hi=GROUND-h+1;return (sp.zone==='bottom'||sp.zone==='ground')?hi:Math.round(rnd(lo,hi));}
+function addCreature(id,T,quiet){const sp=SP[id];const used=new Set(T.creatures.map(c=>c.name));const name=pick(NAMES.filter(n=>!used.has(n)))||pick(NAMES);
+  const w=sp.R[0].length,h=sp.R.length;
+  const c={uid:S.uid++,sp:id,name,x:rnd(2,W-3-w),y:spawnY(sp,h),vx:rnd(-.3,.3),vy:0,dir:Math.random()<.5?1:-1,hunger:30,health:100,rest:0,issues:[],cd:0};
+  T.creatures.push(c); if(!quiet)log(`+ ${name} the ${sp.name} joined`,T); return c;}
+function addItem(id,T,quiet){const it=IT[id],w=it.spr[0].length;let best=2,bs=1e9;
+  for(let k=0;k<40;k++){const x=Math.round(rnd(2,W-2-w));let o=0;for(const j of T.items){const jw=IT[j.id].spr[0].length;o+=Math.max(0,Math.min(x+w,j.x+jw)-Math.max(x,j.x));}if(o<bs){bs=o;best=x;}}
+  T.items.push({iid:S.uid++,id,x:best}); if(!quiet)log(`+ placed ${it.name}`,T);}
+function dropFood(fid,T,x,y){const f=FD[fid],aq=HAB[T.hab].aquatic;
+  for(let i=0;i<f.n;i++){const p={fid,x:clamp(x+rnd(-3,3),2,W-3),y:2,vx:0,vy:0,age:0,rest:false,hop:0};
+    if(!aq){p.y=f.motion==='fly'?rnd(4,GROUND-2):GROUND;if(f.motion==='dish'||f.motion==='crawl')p.x=clamp(x+i*2-f.n,2,W-4);}
+    else if(y!=null)p.y=clamp(y,2,GROUND);
+    T.foods.push(p);}
+}
+
+function seed(h){const T=newTank(h);
+  if(h==='freshwater'){['javafern','sword','driftwood'].forEach(i=>addItem(i,T,1));for(let i=0;i<4;i++)addCreature('neon',T,1);addCreature('cory',T,1);addCreature('cory',T,1);addCreature('snail',T,1);}
+  if(h==='saltwater'){['liverock','anemone','coral'].forEach(i=>addItem(i,T,1));addCreature('clown',T,1);addCreature('clown',T,1);addCreature('cshrimp',T,1);}
+  if(h==='tropical'){['bromeliad','tmoss','cork','pothos'].forEach(i=>addItem(i,T,1));addCreature('dartfrog',T,1);for(let i=0;i<5;i++)addCreature('isopod',T,1);}
+  if(h==='desert'){['cave','cactus','basking','dish'].forEach(i=>addItem(i,T,1));addCreature('leo',T,1);}
+  log('Tank set up',T);return T;}
+
+function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.tanks){S=s;}}catch(e){}
+  HAB_KEYS.forEach(h=>{if(!S.tanks[h])S.tanks[h]=seed(h);});}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
+
+// ---------- Compatibility engine ----------
+const LV={bad:3,warn:2,tip:1,good:0};
+function worst(iss){let w='good';for(const i of iss)if(LV[i.lvl]>LV[w])w=i.lvl;return w;}
+const names=ids=>ids.map(i=>(IT[i]||SP[i]||FD[i]).name).join(' or ');
+function harmsSp(it,sp){if(!it.harm)return false;return (it.harm.ids||[]).includes(sp.id)||(it.harm.tags||[]).some(t=>sp.tags.includes(t));}
+
+function habMismatchTxt(sp,T){const need=sp.hab[0],have=T.hab,na=HAB[need].aquatic,ha=HAB[have].aquatic;
+  if(na&&!ha)return `${sp.name} is aquatic and can't breathe out of water.`;
+  if(!na&&ha)return `${sp.name} would drown in a water tank.`;
+  if(need==='freshwater')return 'Freshwater species: salt water would cause fatal osmotic shock.';
+  if(need==='saltwater')return 'Marine species: fresh water would cause fatal osmotic shock.';
+  if(need==='tropical')return 'Needs high humidity. The desert is far too dry.';
+  return 'Needs dry air. Constant humidity causes respiratory and skin infections.';}
+
+function assessCreature(sp,T,self){
+  const out=[],Hd=HAB[T.hab];
+  if(!sp.hab.includes(T.hab))out.push({lvl:'bad',pen:.45,txt:habMismatchTxt(sp,T),cause:'wrong habitat'});
+  const [lo,hi]=sp.t,t=T.temp,d=t<lo?lo-t:t>hi?t-hi:0;
+  if(d>3)out.push({lvl:'bad',pen:.012*d,txt:`Needs ${lo}–${hi}°C. ${t}°C is far too ${t<lo?'cold':'hot'}.`,cause:'temperature stress'});
+  else if(d>0)out.push({lvl:'warn',pen:.004*d,txt:`Prefers ${lo}–${hi}°C. ${t}°C is a little ${t<lo?'cold':'warm'}.`,cause:'temperature stress'});
+  const others=T.creatures.filter(c=>c!==self),seen=new Set(),thieves=[];
+  for(const o of others){if(seen.has(o.sp))continue;seen.add(o.sp);const os=SP[o.sp];
+    if(sp.eats.includes(os.id))out.push({lvl:'bad',txt:`Will hunt and eat the ${os.name}${os.tags.includes('toxic')?', and get poisoned doing it':''}.`});
+    if(os.eats.includes(sp.id))out.push({lvl:'bad',txt:`The ${os.name} will hunt and eat it.`});
+    if(sp.harass.includes(os.id))out.push({lvl:'warn',txt:`Will harass the ${os.name}${os.tags.includes('longFin')?' and nip its long fins':''}.`});
+    if(os.harass.includes(sp.id))out.push({lvl:'warn',txt:`Gets harassed by the ${os.name}${sp.tags.includes('longFin')?' (fin nipping)':''}.`});
+    if(os.id===sp.id&&sp.tags.includes('territorial'))out.push({lvl:'bad',txt:`Territorial: two ${sp.name}s will fight.`});
+    if(sp.tags.includes('slowEater')&&os.speed>=.35)thieves.push(os.name);
+  }
+  if(thieves.length)out.push({lvl:'warn',txt:`Slow eater. The ${thieves.join(', ')} will steal its food.`});
+  if(sp.school){const n=others.filter(o=>o.sp===sp.id).length+1;if(n<sp.school)out.push({lvl:'warn',pen:.001,txt:`Lives in groups: happiest with ${sp.school}+ (${self?'currently':'would have'} ${n}).`,cause:'stress'});}
+  const ids=new Set(T.items.map(i=>i.id));
+  for(const id of ids){const it=IT[id];
+    if(harmsSp(it,sp))out.push({lvl:it.harm.lvl,pen:it.harm.lvl==='bad'?.03:.006,txt:`The ${it.name} ${it.harm.why.replace('{sp}',sp.name)}.`,cause:it.name});
+    if(sp.destroys.includes(id))out.push({lvl:'warn',txt:`Will eat or uproot the ${it.name}.`});
+    if(sp.loves.includes(id)||sp.needs.includes(id))out.push({lvl:'good',txt:`Loves the ${it.name}.`});
+  }
+  if(sp.needs.length&&!sp.needs.some(n=>ids.has(n)))out.push({lvl:'warn',pen:.003,txt:`Needs ${names(sp.needs)} to feel secure.`,cause:'stress'});
+  const ml=sp.loves.filter(l=>!ids.has(l)&&!sp.needs.includes(l));if(ml.length)out.push({lvl:'tip',txt:`Would enjoy: ${ml.map(l=>IT[l].name).join(', ')}.`});
+  const load=others.reduce((a,o)=>a+SP[o.sp].size,0)+sp.size;
+  if(load>Hd.cap)out.push({lvl:'warn',pen:.003,txt:`Tank ${self?'is':'would be'} overstocked (${load.toFixed(1)}/${Hd.cap} bioload).`,cause:'overcrowding'});
+  if(!out.some(i=>LV[i.lvl]>=2))out.unshift({lvl:'good',txt:others.length?'Gets along with everything in this tank.':'Suitable for this habitat.'});
+  return out;}
+
+function assessItem(it,T){const out=[],Hd=HAB[T.hab];
+  if(!it.hab.includes(T.hab)){const aq=it.hab.some(h=>HAB[h].aquatic);
+    if(it.kind==='plant')out.push({lvl:'bad',txt:Hd.aquatic&&!aq?'Land plant: it would rot underwater and dirty the water.':!Hd.aquatic&&aq?'Aquatic plant: it would dry out and die here.':`Grows in ${it.hab.map(h=>HAB[h].short).join('/')} conditions, not here.`});
+    else out.push({lvl:'warn',txt:`Meant for ${it.hab.map(h=>HAB[h].short).join('/')} setups. Looks out of place.`});}
+  const seen=new Set();
+  for(const c of T.creatures){if(seen.has(c.sp))continue;seen.add(c.sp);const sp=SP[c.sp];
+    if(harmsSp(it,sp))out.push({lvl:it.harm.lvl,txt:`It ${it.harm.why.replace('{sp}',sp.name)}.`});
+    if(sp.destroys.includes(it.id))out.push({lvl:'warn',txt:`The ${sp.name} will eat or uproot it.`});
+    if(sp.loves.includes(it.id)||sp.needs.includes(it.id))out.push({lvl:'good',txt:`The ${sp.name} will love it.`});}
+  if(!out.some(i=>LV[i.lvl]>=2))out.unshift({lvl:'good',txt:'Safe for everything in this tank.'});
+  return out;}
+
+function assessFood(f,T){const out=[],aq=HAB[T.hab].aquatic;
+  if(f.medium==='water'&&!aq)out.push({lvl:'bad',txt:'Aquatic food is useless in a terrarium. It will just rot.'});
+  if(f.medium==='land'&&aq)out.push({lvl:'bad',txt:`${f.name} would drown and dirty the water.`});
+  const present=[...new Set(T.creatures.map(c=>c.sp))].map(i=>SP[i]),eaters=present.filter(s=>s.foods.includes(f.id));
+  if(!present.length)out.push({lvl:'tip',txt:'Nobody lives here yet.'});
+  else if(!eaters.length)out.push({lvl:'warn',txt:'Nobody in this tank eats this. It will rot and dirty the tank.'});
+  else{out.push({lvl:'good',txt:`Eaten by: ${eaters.map(s=>s.name).join(', ')}.`});
+    if(!T.creatures.some(c=>SP[c.sp].foods.includes(f.id)&&c.hunger>25))out.push({lvl:'warn',txt:'Everyone who eats this is full. Overfeeding rots and dirties the tank.'});}
+  const starving=present.filter(s=>!s.foods.some(x=>FD[x].medium===(aq?'water':'land'))||false);
+  return out;}
+
+// ---------- Simulation ----------
+const sprOf=c=>c.dir>0?SP[c.sp].R:SP[c.sp].L;
+function mouth(c){const s=sprOf(c),w=s[0].length,h=s.length,sp=SP[c.sp];
+  return {x:c.dir>0?c.x+w-1:c.x,y:(sp.zone==='bottom'||sp.zone==='ground')?c.y+h-1:c.y+Math.floor(h/2)};}
+function die(c,T,why){T.creatures=T.creatures.filter(o=>o!==c);T.clean-=6;
+  const s=sprOf(c);P.push({x:c.x,y:c.y+s.length-1,ch:'x_x',col:'#bbbbbb',vy:HAB[T.hab].aquatic?-.04:0,life:90});
+  log(`✝ ${c.name} the ${SP[c.sp].name} died (${why})`,T);if(selUid===c.uid)selUid=null;}
+
+function stepCreature(c,T){
+  const sp=SP[c.sp],s=sprOf(c),w=s[0].length,h=s.length,yMax=GROUND-h+1;
+  const ground=sp.zone==='bottom'||sp.zone==='ground';
+  c.hunger=Math.min(100,c.hunger+.012);if(c.cd>0)c.cd--;
+  let tx=null,ty=null,fast=1;
+  // hunting
+  if(c.hunt){const p=T.creatures.find(o=>o.uid===c.hunt);if(!p||--c.huntT<=0)c.hunt=null;else{const ps=sprOf(p);tx=p.x+ps[0].length/2;ty=p.y+ps.length/2;fast=1.8;}}
+  if(!c.hunt&&sp.eats.length&&c.hunger>40&&Math.random()<.006){const prey=T.creatures.filter(o=>sp.eats.includes(o.sp));
+    if(prey.length){const p=pick(prey);c.hunt=p.uid;c.huntT=220;P.push({x:c.x+w/2,y:c.y-1,ch:'!',col:'#ff5a5a',vy:-.05,life:20});}}
+  // harassment
+  if(tx===null){for(const o of T.creatures){if(o===c)continue;
+    if(sp.harass.includes(o.sp)||(sp.tags.includes('territorial')&&o.sp===c.sp)){
+      const d=Math.hypot(o.x-c.x,o.y-c.y);
+      if(d<6){o.health-=.035;o.cause=`attacked by ${c.name}`;if(Math.random()<.02)P.push({x:o.x,y:o.y-1,ch:'!',col:'#ffb703',vy:-.05,life:12});}
+      if(d<20&&Math.random()<.01){tx=o.x;ty=o.y;fast=1.3;}}}}
+  // food
+  const m0=mouth(c);
+  if(tx===null&&c.hunger>25){let best=null,bd=1e9;
+    for(const f of T.foods){if(!sp.foods.includes(f.fid))continue;if(ground&&f.y<GROUND-1.5)continue;
+      const d=Math.hypot(f.x-m0.x,(f.y-m0.y)*2);if(d<bd){bd=d;best=f;}}
+    if(best){tx=best.x;ty=best.y;fast=1.4;}}
+  if(tx!==null){c.rest=0;const m=mouth(c),dx=tx-m.x,dy=ty-m.y,sp2=sp.speed*fast;
+    if(Math.abs(dx)>.5)c.vx=Math.sign(dx)*Math.min(Math.abs(dx),sp2);else c.vx=0;
+    c.vy=ground?0:Math.sign(dy)*Math.min(Math.abs(dy),sp2*.6);
+    if(Math.abs(dx)>1)c.dir=dx>0?1:-1;}
+  else{
+    if(c.rest>0){c.rest--;c.vx*=.8;c.vy*=.8;}
+    else{if(Math.random()<.03){c.vx=rnd(-1,1)*sp.speed;c.vy=ground?0:rnd(-.3,.3)*sp.speed;}
+      if(!HAB[T.hab].aquatic&&Math.random()<.01)c.rest=Math.floor(rnd(20,90));
+      if(sp.zone==='bottom'&&Math.random()<.004)c.rest=Math.floor(rnd(10,40));}
+    if(c.vx>.03)c.dir=1;else if(c.vx<-.03)c.dir=-1;}
+  c.x+=c.vx;c.y+=c.vy;
+  const s2=sprOf(c),w2=s2[0].length;
+  if(c.x<1){c.x=1;c.vx=Math.abs(c.vx);}if(c.x>W-1-w2){c.x=W-1-w2;c.vx=-Math.abs(c.vx);}
+  if(ground)c.y=yMax;else{if(c.y<2){c.y=2;c.vy=Math.abs(c.vy);}if(c.y>yMax){c.y=yMax;c.vy=-Math.abs(c.vy);}}
+  // eat food
+  const m=mouth(c);
+  if(c.cd===0&&c.hunger>8){const i=T.foods.findIndex(f=>sp.foods.includes(f.fid)&&Math.abs(f.x-m.x)<=1.6&&Math.abs(f.y-m.y)<=(ground?2.2:1.6));
+    if(i>=0){c.hunger=Math.max(0,c.hunger-FD[T.foods[i].fid].val);T.foods.splice(i,1);c.cd=6;
+      if(c.hunger<15&&Math.random()<.5)P.push({x:m.x,y:c.y-1,ch:'♥',col:'#ff6b9d',vy:-.06,life:18});}}
+  // catch prey
+  if(c.hunt){const p=T.creatures.find(o=>o.uid===c.hunt);if(p){const ps=sprOf(p);
+    if(m.x>=p.x-1&&m.x<=p.x+ps[0].length&&m.y>=p.y-1&&m.y<=p.y+ps.length){
+      T.creatures=T.creatures.filter(o=>o!==p);c.hunger=Math.max(0,c.hunger-50);c.hunt=null;
+      log(`🍽 ${c.name} the ${sp.name} ate ${p.name} the ${SP[p.sp].name}!`,T);if(selUid===p.uid)selUid=null;
+      if(SP[p.sp].tags.includes('toxic')){c.health-=60;c.cause='poisoned by its prey';log(`☠ ${c.name} was poisoned by the dart frog's toxins`,T);}}}}
+  // health
+  let pen=0,cause=null,mx=0;
+  for(const i of c.issues){if(i.pen){pen+=i.pen;if(i.pen>mx){mx=i.pen;cause=i.cause;}}}
+  if(c.hunger>85){pen+=.08;if(.08>mx){mx=.08;cause='starvation';}}
+  if(T.clean<35){const q=(35-T.clean)*.004;pen+=q;if(q>mx){mx=q;cause=HAB[T.hab].aquatic?'poor water quality':'filthy enclosure';}}
+  if(pen>0){c.health-=pen;c.cause=cause||c.cause;}
+  else if(c.hunger<70&&T.clean>50)c.health=Math.min(100,c.health+.04);
+  if(c.health<=0)die(c,T,c.cause||'stress');
+}
+
+function stepFood(f,T){const fd=FD[f.fid],aq=HAB[T.hab].aquatic;f.age++;
+  const mis=(fd.medium==='water')!==aq;
+  if(aq){if(!f.rest){let vy={slow:f.age<25?0:.05,mid:.14,fast:.3,drift:.07}[fd.motion]??.3;if(mis)vy=.3;
+      f.y+=vy;f.x+=Math.sin(f.age*.15+f.x)*.08+(fd.motion==='drift'?rnd(-.08,.08):0);
+      if(f.y>=GROUND){f.y=GROUND;f.rest=true;}}}
+  else if(!mis){
+    if(fd.motion==='hop'){if(f.hop>0){f.hop--;f.x+=f.vx;f.y=GROUND-(f.hop>2?1:0);}else{f.y=GROUND;if(Math.random()<.04){f.hop=5;f.vx=rnd(-.7,.7);}}}
+    else if(fd.motion==='crawl'){if(Math.random()<.05)f.vx=rnd(-.06,.06);f.x+=f.vx||0;}
+    else if(fd.motion==='fly'){f.x+=rnd(-.5,.5);f.y=clamp(f.y+rnd(-.35,.35),3,GROUND);}
+  } else f.y=GROUND;
+  f.x=clamp(f.x,2,W-3-(fd.ch.length-1));
+  const alive=!mis&&['hop','crawl','fly'].includes(fd.motion);
+  if(alive){if(f.age>1400)return false;}
+  else if(!fd.noRot&&f.age>(mis?250:650)){T.clean-=2;P.push({x:f.x,y:f.y-1,ch:'°',col:'#8a9a5b',vy:-.05,life:12});return false;}
+  return true;}
+
+function step(){const T=tank(),Hd=HAB[T.hab];T.tick++;
+  if(T.tick%10===0)for(const c of T.creatures)c.issues=assessCreature(SP[c.sp],T,c);
+  T.foods=T.foods.filter(f=>stepFood(f,T));
+  for(const c of [...T.creatures])if(T.creatures.includes(c))stepCreature(c,T);
+  const load=T.creatures.reduce((a,c)=>a+SP[c.sp].size,0);
+  const plants=T.items.filter(i=>IT[i.id].kind==='plant'&&IT[i.id].hab.includes(T.hab)).length;
+  const crew=T.creatures.reduce((a,c)=>a+SP[c.sp].cleanup,0);
+  T.clean=clamp(T.clean-.0007*load*(Hd.aquatic?1:.6)+.0012*plants+.0015*crew,0,100);
+  if(T.tick%800===0&&T.clean<40)log(`⚠ ${Hd.qual} is getting poor. Try cleaning.`,T);
+  if(Hd.aquatic&&Math.random()<.12)P.push({x:W-7+rnd(-1,1),y:GROUND,ch:pick(['o','.','°']),col:'#9fd8ff',vy:-.25,life:80,bub:1});
+  if(T.hab==='tropical'&&Math.random()<.08)P.push({x:rnd(2,W-3),y:2,ch:"'",col:'#7fd6e8',vy:.3,life:50});
+  P=P.filter(p=>{p.y+=p.vy;if(p.bub)p.x+=Math.sin(p.y)*.15;p.life--;return p.life>0&&p.y>1.5&&p.y<H-1;});
+}
+
+// ---------- Rendering ----------
+function hexMix(a,b,t){const pa=parseInt(a.slice(1),16),pb=parseInt(b.slice(1),16);
+  const r=Math.round(((pa>>16)&255)*(1-t)+((pb>>16)&255)*t),g=Math.round(((pa>>8)&255)*(1-t)+((pb>>8)&255)*t),bl=Math.round((pa&255)*(1-t)+(pb&255)*t);
+  return '#'+((1<<24)|(r<<16)|(g<<8)|bl).toString(16).slice(1);}
+const hash=(x,y)=>{let h=x*374761393+y*668265263;h=(h^(h>>13))*1274126177;return Math.abs(h^(h>>16));};
+
+function draw(){const T=tank(),Hd=HAB[T.hab],t=T.tick;
+  const g=[],cl=[];for(let y=0;y<H;y++){g.push(Array(W).fill(' '));cl.push(Array(W).fill(null));}
+  const put=(x,y,ch,col)=>{x=Math.round(x);y=Math.round(y);if(x<1||x>W-2||y<1||y>H-2)return;g[y][x]=ch;cl[y][x]=col;};
+  const putStr=(x,y,str,col,solid)=>{for(let i=0;i<str.length;i++)if(solid||str[i]!==' ')put(x+i,y,str[i],col);};
+  for(let x=0;x<W;x++){g[0][x]=(x===0||x===W-1)?'.':'_';g[H-1][x]=(x===0||x===W-1)?"'":'-';cl[0][x]=cl[H-1][x]=Hd.glass;}
+  for(let y=1;y<H-1;y++){g[y][0]=g[y][W-1]='|';cl[y][0]=cl[y][W-1]=Hd.glass;}
+  if(Hd.aquatic){const pat='~~--~^~-';for(let x=1;x<W-1;x++)put(x,1,pat[(x+Math.floor(t/3))%8],Hd.surf);
+    const dirt=(100-T.clean)/100;for(let k=0;k<Math.floor(dirt*dirt*40);k++){const x=hash(k,7)%(W-4)+2,y=(hash(k,3)+Math.floor(t/20)*(k%3))%(GROUND-2)+2;put(x,y,'.','#6b7a3a');}}
+  else if(T.hab==='desert'){putStr(W-16,1,'_[######]_','#ffd166');if(Math.floor(t/6)%2)putStr(W-15,2,' \\ | | /','#ffd16688');}
+  else putStr(4,1,'[mister]','#7fd6e8');
+  for(let y=GROUND+1;y<H-1;y++)for(let x=1;x<W-1;x++){const hh=hash(x+HAB_KEYS.indexOf(T.hab)*97,y);put(x,y,Hd.subCh[hh%Hd.subCh.length],Hd.sub[hh%3]);}
+  for(const i of T.items){const it=IT[i.id],h=it.spr.length,y0=it.float?2:GROUND-h+1;
+    it.spr.forEach((line,r)=>{const off=it.sway?Math.round(Math.sin(t*.05+i.x*.7)*it.sway*(1-r/h)):0;putStr(i.x+off,y0+r,line,it.col);});}
+  for(const f of T.foods){const fd=FD[f.fid];putStr(f.x,f.y,fd.ch,fd.col,true);}
+  for(const c of T.creatures){const sp=SP[c.sp],s=sprOf(c),sel=c.uid===selUid;
+    s.forEach((line,r)=>putStr(c.x,c.y+r,line,sel?'#ffffff':sp.col));
+    if(sel){const lab=`v ${c.name}`;putStr(c.x+Math.floor(s[0].length/2)-1,c.y-1,lab,'#ffffff',true);}
+    else if(c.hunger>75&&Math.floor(t/8)%3===0)put(c.x+s[0].length/2,c.y-1,'?','#ffd166');
+    else if(c.health<35&&Math.floor(t/8)%3===1)put(c.x+s[0].length/2,c.y-1,'+','#ff5a5a');}
+  for(const p of P)putStr(p.x,p.y,p.ch,p.col);
+  let html='';for(let y=0;y<H;y++){let run='',rc=undefined;
+    for(let x=0;x<W;x++){const co=cl[y][x];if(co!==rc){if(run)html+=rc?`<span style="color:${rc}">${esc(run)}</span>`:esc(run);run='';rc=co;}run+=g[y][x];}
+    if(run)html+=rc?`<span style="color:${rc}">${esc(run)}</span>`:esc(run);html+='\n';}
+  const el=$('#tank');el.innerHTML=html;
+  el.style.backgroundColor=hexMix(Hd.bg,Hd.murk,clamp((70-T.clean)/70,0,1)*.85);
+}
+
+// ---------- UI ----------
+const badge=l=>({good:'<span class="b-good font-semibold">✓</span>',tip:'<span class="b-good font-semibold">✓</span>',warn:'<span class="b-warn font-semibold">!</span>',bad:'<span class="b-bad font-semibold">✗</span>'}[l]);
+const issueHtml=iss=>iss.map(i=>`<div class="flex gap-1.5"><span class="b-${i.lvl} shrink-0">${({good:'✓',warn:'⚠',bad:'✗',tip:'💡'})[i.lvl]}</span><span>${esc(i.txt)}</span></div>`).join('');
+const preview=(lines,col)=>`<span class="mono text-xs px-1 rounded whitespace-pre" style="background:#0d1b26;color:${col}">${esc(lines.reduce((a,b)=>b.trim().length>a.trim().length?b:a).trim())}</span>`;
+let dirtyLog=true,lastShopSig='',lastInhKey='';
+
+function renderHabs(){$('#habs').innerHTML=HAB_KEYS.map(h=>`<button class="btn ${h===S.cur?'on':''}" data-hab="${h}">${HAB[h].emoji} ${HAB[h].short}</button>`).join('');}
+function renderSpeeds(){$('#speeds').innerHTML=[[0,'⏸'],[1,'1×'],[3,'3×']].map(([v,l])=>`<button class="btn ${S.speed===v?'on':''}" data-speed="${v}">${l}</button>`).join('');}
+function renderTabs(){$('#tabs').innerHTML=[['creatures','Creatures'],['items','Plants & Decor'],['food','Food']].map(([k,l])=>`<button class="btn flex-1 ${shopTab===k?'on':''}" data-tab="${k}">${l}</button>`).join('');}
+function syncTemp(){const T=tank();$('#temp').value=T.temp;$('#tempv').textContent=`${T.temp}°C / ${Math.round(T.temp*9/5+32)}°F`;}
+
+function shopEntries(){const T=tank();
+  if(shopTab==='creatures')return SPECIES.map(s=>({kind:'creature',id:s.id,name:s.name,fits:s.hab.includes(T.hab),prev:preview(s.R,s.col),iss:assessCreature(s,T,null)}));
+  if(shopTab==='items')return ITEMS.map(i=>({kind:'item',id:i.id,name:i.name,fits:i.hab.includes(T.hab),prev:preview(i.spr,i.col),iss:assessItem(i,T)}));
+  const aq=HAB[T.hab].aquatic;return FOODS.map(f=>({kind:'food',id:f.id,name:f.name,fits:(f.medium==='water')===aq,prev:preview([f.ch],f.col),iss:assessFood(f,T)}));}
+
+function renderShop(force){const T=tank();
+  const sig=[shopTab,S.cur,T.temp,T.creatures.map(c=>c.sp).sort().join(),T.items.map(i=>i.id).sort().join(),T.creatures.map(c=>c.hunger>25?1:0).join(''),shopSel&&shopSel.id,confirmAdd].join('|');
+  if(!force&&sig===lastShopSig)return;lastShopSig=sig;
+  const E=shopEntries(),row=e=>`<div class="row flex items-center gap-2 px-2 py-1 rounded cursor-pointer ${shopSel&&shopSel.id===e.id&&shopSel.kind===e.kind?'sel':''}" data-shop="${e.kind}:${e.id}">${e.prev}<span class="flex-1 text-xs">${esc(e.name)}</span>${badge(worst(e.iss))}</div>`;
+  const a=E.filter(e=>e.fits),b=E.filter(e=>!e.fits);
+  $('#shop').innerHTML=`<div class="text-[11px] uppercase tracking-wide text-[var(--muted-foreground)] px-2 pt-1">Native to ${HAB[S.cur].short}</div>${a.map(row).join('')}<div class="text-[11px] uppercase tracking-wide text-[var(--muted-foreground)] px-2 pt-3">Other habitats</div>${b.map(row).join('')}`;
+  renderDetail(E);}
+
+function renderDetail(E){const el=$('#detail');
+  if(!shopSel){el.innerHTML='<div class="text-[var(--muted-foreground)]">Pick something to see how well it fits this tank before you add it.</div>';return;}
+  const e=(E||shopEntries()).find(x=>x.kind===shopSel.kind&&x.id===shopSel.id);if(!e)return;
+  let facts='',btn='';
+  if(e.kind==='creature'){const s=SP[e.id];facts=`<div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[var(--muted-foreground)] my-2"><div>Habitat: <b class="text-[var(--foreground)]">${HAB[s.hab[0]].short}</b></div><div>Temp: <b class="text-[var(--foreground)]">${s.t[0]}–${s.t[1]}°C</b></div><div>Bioload: <b class="text-[var(--foreground)]">${s.size}</b></div><div>Group: <b class="text-[var(--foreground)]">${s.school?s.school+'+':'solo ok'}</b></div><div class="col-span-2">Eats: <b class="text-[var(--foreground)]">${s.foods.map(f=>FD[f].name).join(', ')}</b></div></div><pre class="mono text-xs p-2 rounded" style="background:#0d1b26;color:${s.col}">${esc(s.R.join('\n'))}</pre>`;
+    btn=`<button class="btn on mt-2 w-full" data-add>${confirmAdd?'⚠ Add anyway?':'Add to tank'}</button>`;}
+  else if(e.kind==='item'){const i=IT[e.id];facts=`<div class="text-[var(--muted-foreground)] my-2">Type: ${i.kind} · Habitat: ${i.hab.map(h=>HAB[h].short).join(', ')}</div><pre class="mono text-xs p-2 rounded" style="background:#0d1b26;color:${i.col}">${esc(i.spr.join('\n'))}</pre>`;
+    btn=`<button class="btn on mt-2 w-full" data-add>${confirmAdd?'⚠ Place anyway?':'Place in tank'}</button>`;}
+  else{const f=FD[e.id];facts=`<div class="text-[var(--muted-foreground)] my-2">For ${f.medium==='water'?'aquariums':'terrariums'}</div>`;
+    btn=`<button class="btn on mt-2 w-full" data-feed>Feed</button><div class="text-[var(--muted-foreground)] mt-1 text-center">or click inside the tank to drop it at a spot</div>`;}
+  const blurb=(SP[e.id]&&e.kind==='creature'?SP[e.id]:e.kind==='item'?IT[e.id]:FD[e.id]).blurb;
+  el.innerHTML=`<div class="flex items-center gap-2"><b class="text-sm">${esc(e.name)}</b>${badge(worst(e.iss))}</div><div class="text-[var(--muted-foreground)] mt-1">${esc(blurb)}</div>${facts}<div class="space-y-1">${issueHtml(e.iss)}</div>${btn}`;}
+
+function mood(c){const w=worst(c.issues||[]);if(c.health<30)return '😵';if(c.hunger>75||w==='bad')return '😟';if(w==='warn'||c.health<70)return '😐';return '😊';}
+function renderInh(){const T=tank(),key=S.cur+T.creatures.map(c=>c.uid).join(',')+'|'+selUid;
+  if(key!==lastInhKey){lastInhKey=key;
+    $('#inh').innerHTML=T.creatures.length?T.creatures.map(c=>{const sp=SP[c.sp];return `<div class="row flex items-center gap-2 px-1.5 py-1 rounded cursor-pointer ${c.uid===selUid?'sel':''}" data-uid="${c.uid}">
+      ${preview(sp.R,sp.col)}<div class="flex-1 min-w-0"><div class="text-xs truncate">${esc(c.name)} <span class="text-[var(--muted-foreground)]">${esc(sp.name)}</span></div>
+      <div class="flex gap-1 mt-0.5"><div class="bar flex-1" title="Health"><i id="hp${c.uid}"></i></div><div class="bar flex-1" title="Fullness"><i id="fu${c.uid}"></i></div></div></div>
+      <span id="md${c.uid}" class="text-sm"></span><button class="text-xs text-[var(--muted-foreground)] hover:text-[var(--error)] px-1" data-rm="${c.uid}" title="Rehome">✕</button></div>`;}).join(''):'<div class="text-xs text-[var(--muted-foreground)]">Empty. Add creatures from the shop.</div>';
+    $('#itemsIn').innerHTML=T.items.map(i=>`<span class="text-xs px-2 py-0.5 rounded border border-[var(--border)] flex items-center gap-1"><span style="color:${IT[i.id].col}">■</span>${esc(IT[i.id].name)}<button class="hover:text-[var(--error)] text-[var(--muted-foreground)]" data-rmi="${i.iid}">✕</button></span>`).join('')||'<span class="text-xs text-[var(--muted-foreground)]">None</span>';}
+  for(const c of T.creatures){const hp=$('#hp'+c.uid),fu=$('#fu'+c.uid),md=$('#md'+c.uid);if(!hp)continue;
+    hp.style.width=c.health+'%';hp.style.background=c.health>60?'var(--success)':c.health>30?'var(--warning)':'var(--error)';
+    fu.style.width=(100-c.hunger)+'%';fu.style.background='var(--chart-2)';md.textContent=mood(c);}
+  const c=T.creatures.find(x=>x.uid===selUid),d=$('#inhDetail');
+  if(c){const sp=SP[c.sp];d.innerHTML=`<div class="text-xs border-t border-[var(--card-border)] pt-2 space-y-1"><div><b>${esc(c.name)}</b> · health ${Math.round(c.health)}% · ${c.hunger>75?'<span class="b-warn">hungry</span>':c.hunger>40?'peckish':'full'} · eats ${sp.foods.map(f=>FD[f].name).join(', ')}</div>${issueHtml(c.issues||[])}</div>`;}
+  else d.innerHTML='<div class="text-[11px] text-[var(--muted-foreground)]">Bars: health / fullness. Click a creature (or click it in the tank) for details.</div>';}
+
+function renderReport(){const T=tank(),lines=new Map();
+  for(const c of T.creatures)for(const i of (c.issues||[]))if(LV[i.lvl]>=2){const k=SP[c.sp].name+': '+i.txt;if(!lines.has(k))lines.set(k,i.lvl);}
+  const seen=new Set();for(const it of T.items){if(seen.has(it.id))continue;seen.add(it.id);for(const i of assessItem(IT[it.id],T))if(LV[i.lvl]>=2&&!i.txt.startsWith('It ')&&!i.txt.startsWith('The '))lines.set(IT[it.id].name+': '+i.txt,i.lvl);}
+  if(T.clean<40)lines.set(`${HAB[T.hab].qual} is low (${Math.round(T.clean)}%). Clean the tank.`,'warn');
+  const arr=[...lines].sort((a,b)=>LV[b[1]]-LV[a[1]]);
+  $('#report').innerHTML=arr.length?arr.map(([t,l])=>`<div class="flex gap-1.5"><span class="b-${l}">${l==='bad'?'✗':'⚠'}</span><span>${esc(t)}</span></div>`).join(''):`<div class="b-good">✓ Everything here is naturally compatible.</div>`;
+  if(dirtyLog){$('#log').innerHTML=T.log.map(l=>`<div>${esc(l)}</div>`).join('');dirtyLog=false;}}
+
+function renderStatus(){const T=tank(),Hd=HAB[T.hab],load=T.creatures.reduce((a,c)=>a+SP[c.sp].size,0);
+  $('#qname').textContent=Hd.qual;$('#qval').textContent=Math.round(T.clean)+'%';
+  const q=$('#qbar');q.style.width=T.clean+'%';q.style.background=T.clean>60?'var(--success)':T.clean>35?'var(--warning)':'var(--error)';
+  $('#load').innerHTML=`<span class="${load>Hd.cap?'b-warn':''}">${load.toFixed(1)} / ${Hd.cap}</span>`;
+  const s=Math.floor(T.tick/8);$('#clock').textContent=`${Math.floor(s/60)}m ${s%60}s`;
+  $('#hint').textContent=shopSel&&shopSel.kind==='food'?`Click in the tank to drop ${FD[shopSel.id].name}`:'Click a creature in the tank to inspect it';}
+
+function refreshAll(){renderHabs();renderSpeeds();renderTabs();syncTemp();renderShop(true);lastInhKey='';dirtyLog=true;renderInh();renderReport();renderStatus();draw();}
+
+// ---------- Events ----------
+document.addEventListener('click',e=>{const T=tank(),t=e.target.closest('[data-hab],[data-speed],[data-tab],[data-shop],[data-add],[data-feed],[data-uid],[data-rm],[data-rmi]');if(!t)return;
+  if(t.dataset.hab){S.cur=t.dataset.hab;P=[];selUid=null;confirmAdd=false;for(const c of tank().creatures)c.issues=assessCreature(SP[c.sp],tank(),c);refreshAll();}
+  else if(t.dataset.speed!=null){S.speed=+t.dataset.speed;renderSpeeds();}
+  else if(t.dataset.tab){shopTab=t.dataset.tab;shopSel=null;confirmAdd=false;renderTabs();renderShop(true);}
+  else if(t.dataset.shop){const [kind,id]=t.dataset.shop.split(':');shopSel={kind,id};confirmAdd=false;renderShop(true);renderStatus();}
+  else if(t.dataset.add!=null&&shopSel){const E=shopEntries().find(x=>x.kind===shopSel.kind&&x.id===shopSel.id);
+    if(worst(E.iss)==='bad'&&!confirmAdd){confirmAdd=true;renderShop(true);return;}
+    confirmAdd=false;if(shopSel.kind==='creature'){const c=addCreature(shopSel.id,T);selUid=c.uid;}else addItem(shopSel.id,T);
+    for(const c of T.creatures)c.issues=assessCreature(SP[c.sp],T,c);renderShop(true);renderInh();renderReport();}
+  else if(t.dataset.feed!=null&&shopSel){dropFood(shopSel.id,T,rnd(10,W-12));log(`🍴 Fed ${FD[shopSel.id].name}`);}
+  else if(t.dataset.rm){const c=T.creatures.find(x=>x.uid==t.dataset.rm);if(c){T.creatures=T.creatures.filter(x=>x!==c);log(`− ${c.name} was rehomed`);if(selUid===c.uid)selUid=null;}
+    for(const c of T.creatures)c.issues=assessCreature(SP[c.sp],T,c);renderInh();renderShop(true);renderReport();}
+  else if(t.dataset.rmi){const i=T.items.find(x=>x.iid==t.dataset.rmi);T.items=T.items.filter(x=>x!==i);if(i)log(`− removed ${IT[i.id].name}`);
+    for(const c of T.creatures)c.issues=assessCreature(SP[c.sp],T,c);lastInhKey='';renderInh();renderShop(true);renderReport();}
+  else if(t.dataset.uid){selUid=+t.dataset.uid===selUid?null:+t.dataset.uid;renderInh();draw();}
+});
+$('#tank').addEventListener('click',e=>{const T=tank(),r=e.currentTarget.getBoundingClientRect(),cs=getComputedStyle(e.currentTarget);
+  const pl=parseFloat(cs.paddingLeft),pt=parseFloat(cs.paddingTop);
+  const x=(e.clientX-r.left-pl)/((r.width-2*pl)/W),y=(e.clientY-r.top-pt)/((r.height-2*pt)/H);
+  if(shopSel&&shopSel.kind==='food'){if(x<1||x>W-2||y<1||y>H-2)return;dropFood(shopSel.id,T,x,HAB[T.hab].aquatic?Math.max(2,y):null);log(`🍴 Dropped ${FD[shopSel.id].name}`);return;}
+  let best=null,bd=4;for(const c of T.creatures){const s=sprOf(c),cx=c.x+s[0].length/2,cy=c.y+s.length/2,d=Math.hypot((cx-x)/1.5,cy-y);if(d<bd){bd=d;best=c;}}
+  selUid=best?best.uid:null;renderInh();draw();});
+$('#temp').addEventListener('input',e=>{const T=tank();T.temp=+e.target.value;syncTemp();for(const c of T.creatures)c.issues=assessCreature(SP[c.sp],T,c);renderShop();renderReport();});
+$('#clean').addEventListener('click',()=>{const T=tank();T.clean=Math.min(100,T.clean+45);const n=T.foods.filter(f=>f.rest&&f.age>200).length;T.foods=T.foods.filter(f=>!(f.rest&&f.age>200));log(`🧽 Cleaned the tank${n?` (removed ${n} old food bits)`:''}`);renderStatus();});
+$('#reset').addEventListener('click',e=>{const b=e.currentTarget;if(b.dataset.c!=='1'){b.dataset.c='1';b.textContent='Really empty?';setTimeout(()=>{b.dataset.c='';b.textContent='↺ Empty tank';},2500);return;}
+  b.dataset.c='';b.textContent='↺ Empty tank';S.tanks[S.cur]=newTank(S.cur);log('Tank emptied');selUid=null;refreshAll();});
+
+// ---------- Boot ----------
+load();for(const h of HAB_KEYS)for(const c of S.tanks[h].creatures)c.issues=assessCreature(SP[c.sp],S.tanks[h],c);
+refreshAll();
+let frame=0;
+setInterval(()=>{for(let i=0;i<S.speed;i++)step();draw();frame++;
+  if(frame%4===0){renderInh();renderStatus();renderReport();}
+  if(frame%10===0)renderShop();
+  if(frame%40===0)save();},TICK_MS);
+</script>
+</body>
+</html>
